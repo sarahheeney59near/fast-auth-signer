@@ -104,11 +104,11 @@ const onCreateAccount = async ({
         window.localStorage.removeItem(`temp_fastauthflow_${publicKeyFak}`);
 
         setStatusMessage('Redirecting to app...');
-
+        const recoveryPK = await window.fastAuthController.getUserCredential(accessToken);
         const parsedUrl = new URL(success_url || window.location.origin + (basePath ? `/${basePath}` : ''));
         parsedUrl.searchParams.set('account_id', accId);
         parsedUrl.searchParams.set('public_key', public_key_lak);
-        parsedUrl.searchParams.set('all_keys', (publicKeyFak ? [public_key_lak, publicKeyFak] : [public_key_lak]).join(','));
+        parsedUrl.searchParams.set('all_keys', (publicKeyFak ? [public_key_lak, publicKeyFak, recoveryPK] : [public_key_lak, recoveryPK]).join(','));
 
         window.location.replace(parsedUrl.href);
       },
@@ -197,7 +197,7 @@ export const onSignIn = async ({
         const parsedUrl = new URL(success_url || window.location.origin + (basePath ? `/${basePath}` : ''));
         parsedUrl.searchParams.set('account_id', accountIds[0]);
         parsedUrl.searchParams.set('public_key', public_key_lak);
-        parsedUrl.searchParams.set('all_keys', (publicKeyFak ? [public_key_lak, publicKeyFak] : [public_key_lak]).join(','));
+        parsedUrl.searchParams.set('all_keys', (publicKeyFak ? [public_key_lak, publicKeyFak, recoveryPK] : [public_key_lak, recoveryPK]).join(','));
 
         if (inIframe()) {
           window.open(parsedUrl.href, '_parent');
@@ -261,6 +261,11 @@ function AuthCallbackPage() {
             if (keypair) {
               await window.fastAuthController.setKey(keypair);
             }
+
+            if (!window.fastAuthController.getAccountId()) {
+              await window.fastAuthController.setAccountId(accountId);
+            }
+
             await window.fastAuthController.claimOidcToken(user.accessToken);
             const oidcKeypair = await window.fastAuthController.getKey(`oidc_keypair_${user.accessToken}`);
             (window as any).firestoreController = new FirestoreController();

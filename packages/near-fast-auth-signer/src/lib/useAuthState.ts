@@ -1,11 +1,12 @@
 /* eslint-disable import/prefer-default-export */
-import { getKeys } from '@near-js/biometric-ed25519/lib';
+import { getKeys, isPassKeyAvailable } from '@near-js/biometric-ed25519/lib';
 import { KeyPairEd25519 } from '@near-js/crypto';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom/dist';
 
 import FastAuthController from './controller';
 import { network, networkId } from '../utils/config';
+import { checkFirestoreReady, firebaseAuth } from '../utils/firebase';
 
 type AuthState = {
   authenticated: 'loading' | boolean | Error
@@ -22,9 +23,12 @@ export const useAuthState = (skipGetKeys = false): AuthState => {
   }, []);
 
   const [controllerState, setControllerState] = useState<'loading' | boolean>('loading');
+  const [isPassKeySupported, setIsPassKeySupported] = useState<boolean>(null);
+  isPassKeyAvailable().then((isAvailable) => setIsPassKeySupported(isAvailable));
   const [query] = useSearchParams();
 
   useEffect(() => {
+    if (isPassKeySupported === null) return;
     if (skipGetKeys) {
       setAuthenticated(false);
       setControllerState(false);
@@ -32,11 +36,11 @@ export const useAuthState = (skipGetKeys = false): AuthState => {
       if (controllerState === true) {
         setAuthenticated(true);
       }
-    } else if (!webauthnUsername) {
+    } else if (!webauthnUsername && isPassKeySupported) {
       setAuthenticated(false);
     } else if (query.get('email') && query.get('email') !== webauthnUsername) {
       setAuthenticated(false);
-    } else {
+    } else if (isPassKeySupported) {
       getKeys(webauthnUsername)
         .then((keypairs) => Promise.allSettled(
           keypairs.map((k) => fetch(`${network.fastAuth.authHelperUrl}/publicKey/${k.getPublicKey().toString()}/accounts`)
@@ -63,8 +67,20 @@ export const useAuthState = (skipGetKeys = false): AuthState => {
             setAuthenticated(true);
           }
         }).catch(() => setAuthenticated(false));
+    } else {
+      checkFirestoreReady().then((isReady) => {
+        if (isReady) {
+          // @ts-ignore
+          const oidcToken = firebaseAuth.currentUser.accessToken;
+          if (window.fastAuthController.getLocalStoreKey(`oidc_keypair_${oidcToken}`)) {
+            setAuthenticated(true);
+          } else {
+            setControllerState(false);
+          }
+        }
+      });
     }
-  }, [webauthnUsername, controllerState, query]);
+  }, [webauthnUsername, controllerState, query, isPassKeySupported]);
 
   useEffect(() => {
     if (window.fastAuthController) {
