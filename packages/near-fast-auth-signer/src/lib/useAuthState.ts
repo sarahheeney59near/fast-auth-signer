@@ -24,7 +24,11 @@ export const useAuthState = (skipGetKeys = false): AuthState => {
 
   const [controllerState, setControllerState] = useState<'loading' | boolean>('loading');
   const [isPassKeySupported, setIsPassKeySupported] = useState<boolean>(null);
-  isPassKeyAvailable().then((isAvailable) => setIsPassKeySupported(isAvailable));
+
+  useEffect(() => {
+    isPassKeyAvailable().then((isAvailable) => setIsPassKeySupported(isAvailable));
+  }, []);
+
   const [query] = useSearchParams();
 
   useEffect(() => {
