@@ -72,11 +72,22 @@ export const useAuthState = (skipGetKeys = false): AuthState => {
           }
         }).catch(() => setAuthenticated(false));
     } else {
-      checkFirestoreReady().then((isReady) => {
+      checkFirestoreReady().then(async (isReady) => {
         if (isReady) {
           // @ts-ignore
           const oidcToken = firebaseAuth.currentUser.accessToken;
           if (window.fastAuthController.getLocalStoreKey(`oidc_keypair_${oidcToken}`)) {
+            const recoveryPK = await window.fastAuthController.getUserCredential(oidcToken);
+            const accountIds = await fetch(`${network.fastAuth.authHelperUrl}/publicKey/${recoveryPK}/accounts`)
+              .then((res) => res.json())
+              .catch((err) => {
+                console.log(err);
+                throw new Error('Unable to retrieve account Id');
+              });
+            (window as any).fastAuthController = new FastAuthController({
+              accountId: accountIds[0],
+              networkId
+            });
             setAuthenticated(true);
           } else {
             setControllerState(false);
