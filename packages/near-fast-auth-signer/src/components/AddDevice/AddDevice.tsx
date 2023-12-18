@@ -2,6 +2,7 @@ import { createKey, isPassKeyAvailable } from '@near-js/biometric-ed25519/lib';
 import { captureException } from '@sentry/react';
 import BN from 'bn.js';
 import { fetchSignInMethodsForEmail, sendSignInLinkToEmail } from 'firebase/auth';
+import { KeyPair } from 'near-api-js';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -9,7 +10,6 @@ import styled from 'styled-components';
 
 import { Button } from '../../lib/Button';
 import FirestoreController from '../../lib/firestoreController';
-import { openToast } from '../../lib/Toast';
 import { useAuthState } from '../../lib/useAuthState';
 import { decodeIfTruthy, inIframe, redirectWithError } from '../../utils';
 import { basePath } from '../../utils/config';
@@ -74,7 +74,10 @@ export const handleCreateAccount = async ({
   accountId, email, isRecovery, success_url, failure_url, public_key, contract_id, methodNames
 }) => {
   const passkeyAvailable = await isPassKeyAvailable();
-  let publicKeyWebAuthn; let keyPair;
+
+  let publicKeyWebAuthn: string;
+  let keyPair: KeyPair;
+
   if (passkeyAvailable) {
     keyPair = await createKey(email);
     publicKeyWebAuthn = keyPair.getPublicKey().toString();
@@ -103,7 +106,7 @@ export const handleCreateAccount = async ({
   });
   window.localStorage.setItem('emailForSignIn', email);
   return {
-    email, publicKey: publicKeyWebAuthn, accountId, privateKey: keyPair && keyPair.toString()
+    publicKey: publicKeyWebAuthn, accountId, privateKey: keyPair && keyPair.toString()
   };
 };
 
@@ -134,7 +137,7 @@ function SignInPage() {
       if (!result.length) {
         throw new Error('Account not found, please create an account and try again');
       }
-      const { publicKey: publicKeyFak, email, privateKey } = await handleCreateAccount({
+      const { publicKey: publicKeyFak, privateKey } = await handleCreateAccount({
         accountId:   null,
         email:       data.email,
         isRecovery:  true,
@@ -145,7 +148,7 @@ function SignInPage() {
         methodNames,
       });
       const newSearchParams = new URLSearchParams({
-        email,
+        email:      data.email,
         isRecovery: 'true',
         ...(publicKeyFak ? { publicKeyFak } : {}),
         ...(success_url ? { success_url } : {}),
@@ -157,19 +160,8 @@ function SignInPage() {
       const hashParams = new URLSearchParams({ ...(privateKey ? { privateKey } : {}) });
       navigate(`/verify-email?${newSearchParams.toString()}#${hashParams.toString()}`);
     } catch (error: any) {
+      console.error(error);
       redirectWithError({ success_url, failure_url, error });
-
-      if (typeof error?.message === 'string') {
-        openToast({
-          type:  'ERROR',
-          title: error.message,
-        });
-      } else {
-        openToast({
-          type:  'ERROR',
-          title: 'Something went wrong',
-        });
-      }
     }
   }, [searchParams, navigate]);
 
@@ -263,10 +255,6 @@ function SignInPage() {
         } catch (error) {
           captureException(error);
           redirectWithError({ success_url, failure_url, error });
-          openToast({
-            type:  'ERROR',
-            title: error.message,
-          });
         }
       } else if (email && !authenticated) {
         // once it has email but not authenicated, it means existing passkey is not valid anymore, therefore remove webauthn_username and try to create a new passkey

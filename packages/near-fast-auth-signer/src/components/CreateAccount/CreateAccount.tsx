@@ -61,7 +61,7 @@ function CreateAccount() {
     try {
       const fullAccountId = `${data.username}.${network.fastAuth.accountIdSuffix}`;
       const {
-        publicKey: publicKeyFak, email, privateKey, accountId
+        publicKey: publicKeyFak, privateKey, accountId
       } = await handleCreateAccount({
         accountId:   fullAccountId,
         email:       data.email,
@@ -74,7 +74,7 @@ function CreateAccount() {
       });
       const newSearchParams = new URLSearchParams({
         accountId,
-        email,
+        email:      data.email,
         isRecovery: 'false',
         ...(publicKeyFak ? { publicKeyFak } : {}),
         ...(success_url ? { success_url } : {}),
