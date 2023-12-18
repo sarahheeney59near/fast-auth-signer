@@ -117,17 +117,8 @@ function SignInPage() {
   const [renderRedirectButton, setRenderRedirectButton] = useState('');
 
   if (!window.firestoreController) {
-    (window as any).firestoreController = new FirestoreController();
+    window.firestoreController = new FirestoreController();
   }
-  const [isFirestoreReady, setIsFirestoreReady] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    if (isFirestoreReady === null && authenticated !== 'loading') {
-      checkFirestoreReady().then((isReady) => {
-        setIsFirestoreReady(isReady as boolean);
-      });
-    }
-  }, [authenticated]);
 
   const addDevice = useCallback(async (data: any) => {
     if (!data.email) return;
@@ -166,7 +157,6 @@ function SignInPage() {
       const hashParams = new URLSearchParams({ ...(privateKey ? { privateKey } : {}) });
       navigate(`/verify-email?${newSearchParams.toString()}#${hashParams.toString()}`);
     } catch (error: any) {
-      console.log(error);
       redirectWithError({ success_url, failure_url, error });
 
       if (typeof error?.message === 'string') {
@@ -184,18 +174,23 @@ function SignInPage() {
   }, [searchParams, navigate]);
 
   useEffect(() => {
-    if (authenticated === 'loading' || isFirestoreReady === null) return;
+    if (authenticated === 'loading') return;
+
     const handleAuthCallback = async () => {
+      const isFirestoreReady = await checkFirestoreReady();
+
       const success_url = decodeIfTruthy(searchParams.get('success_url'));
       const failure_url = decodeIfTruthy(searchParams.get('failure_url'));
       const public_key =  decodeIfTruthy(searchParams.get('public_key'));
       const contract_id = decodeIfTruthy(searchParams.get('contract_id'));
       const methodNames = decodeIfTruthy(searchParams.get('methodNames'));
-
       const email = decodeIfTruthy(searchParams.get('email'));
+
+      const parsedUrl = new URL(success_url || window.location.origin + (basePath ? `/${basePath}` : ''));
+
       if (authenticated === true && isFirestoreReady) {
         if (!public_key || !contract_id) {
-          window.location.replace(success_url || window.location.origin + (basePath ? `/${basePath}` : ''));
+          window.location.replace(parsedUrl.href);
           return;
         }
         const publicKeyFak = await window.fastAuthController.getPublicKey();
@@ -203,12 +198,12 @@ function SignInPage() {
         const existingDeviceLakKey = existingDevice?.publicKeys?.filter((key) => key !== publicKeyFak)[0];
         // if given lak key is already attached to webAuthN public key, no need to add it again
         const noNeedToAddKey = existingDeviceLakKey === public_key;
-        if (noNeedToAddKey) {
-          const parsedUrl = new URL(success_url || window.location.origin + (basePath ? `/${basePath}` : ''));
-          parsedUrl.searchParams.set('account_id', (window as any).fastAuthController.getAccountId());
-          parsedUrl.searchParams.set('public_key', public_key);
-          parsedUrl.searchParams.set('all_keys', [public_key, publicKeyFak].join(','));
 
+        parsedUrl.searchParams.set('account_id', window.fastAuthController.getAccountId());
+        parsedUrl.searchParams.set('public_key', public_key);
+        parsedUrl.searchParams.set('all_keys', [public_key, publicKeyFak].join(','));
+
+        if (noNeedToAddKey) {
           if (inIframe()) {
             setRenderRedirectButton(parsedUrl.href);
           } else {
@@ -217,16 +212,20 @@ function SignInPage() {
           return;
         }
 
-        (window as any).fastAuthController.signAndSendAddKey({
-          contractId: contract_id,
-          methodNames,
-          allowance:  new BN('250000000000000'),
-          publicKey:  public_key,
-        }).then((res) => res.json()).then((res) => {
-          const failure = res['Receipts Outcome'].find(({ outcome: { status } }) => Object.keys(status).some((k) => k === 'Failure'))?.outcome?.status?.Failure;
+        try {
+          const res = await window.fastAuthController.signAndSendAddKey({
+            contractId: contract_id,
+            methodNames,
+            allowance:  new BN('250000000000000'),
+            publicKey:  public_key,
+          });
+          const resJSON = res && res.json();
+
+          const failure = resJSON['Receipts Outcome'].find(({ outcome: { status } }) => Object.keys(status).some((k) => k === 'Failure'))?.outcome.status.Failure;
+
           if (failure?.ActionError?.kind?.LackBalanceForState) {
             navigate(`/devices?${searchParams.toString()}`);
-            return null;
+            return;
           }
 
           // Add device
@@ -239,45 +238,36 @@ function SignInPage() {
           });
 
           // Since FAK is already added, we only add LAK
-          return window.firestoreController.addDeviceCollection({
+          await window.firestoreController.addDeviceCollection({
             fakPublicKey:  null,
             lakPublicKey: public_key,
             gateway:      success_url,
-          })
-            .then(() => {
-              const parsedUrl = new URL(success_url || window.location.origin + (basePath ? `/${basePath}` : ''));
-              parsedUrl.searchParams.set('account_id', (window as any).fastAuthController.getAccountId());
-              parsedUrl.searchParams.set('public_key', public_key);
-              parsedUrl.searchParams.set('all_keys', [public_key, publicKeyFak].join(','));
-              window.parent.postMessage({
-                type:   'method',
-                method: 'query',
-                id:     1234,
-                params: {
-                  request_type: 'complete_sign_in',
-                  publicKey:    public_key,
-                  allKeys:      [public_key, publicKeyFak].join(','),
-                  accountId:    (window as any).fastAuthController.getAccountId()
-                }
-              }, '*');
-              if (inIframe()) {
-                setRenderRedirectButton(parsedUrl.href);
-              } else {
-                window.location.replace(parsedUrl.href);
-              }
-            }).catch((err) => {
-              console.log('Failed to add device collection', err);
-              throw new Error('Failed to add device collection');
-            });
-        }).catch((error) => {
-          console.log('error', error);
+          });
+
+          window.parent.postMessage({
+            type:   'method',
+            method: 'query',
+            id:     1234,
+            params: {
+              request_type: 'complete_sign_in',
+              publicKey:    public_key,
+              allKeys:      [public_key, publicKeyFak].join(','),
+              accountId:    (window as any).fastAuthController.getAccountId()
+            }
+          }, '*');
+          if (inIframe()) {
+            setRenderRedirectButton(parsedUrl.href);
+          } else {
+            window.location.replace(parsedUrl.href);
+          }
+        } catch (error) {
           captureException(error);
           redirectWithError({ success_url, failure_url, error });
           openToast({
             type:  'ERROR',
             title: error.message,
           });
-        });
+        }
       } else if (email && !authenticated) {
         // once it has email but not authenicated, it means existing passkey is not valid anymore, therefore remove webauthn_username and try to create a new passkey
         window.localStorage.removeItem('webauthn_username');
@@ -287,7 +277,7 @@ function SignInPage() {
     };
 
     handleAuthCallback();
-  }, [isFirestoreReady, authenticated]);
+  }, [authenticated]);
 
   if (authenticated === true) {
     return renderRedirectButton ? (
